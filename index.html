@@ -71,6 +71,26 @@ body.display{background:#15130f;color:#f6f1e7;overflow:hidden}
 .banner{position:fixed;left:0;right:0;bottom:0;background:#e0a84a;color:#15130f;font-family:var(--display);font-weight:800;text-transform:uppercase;font-size:6vh;padding:2.4vh 4vw;transform:translateY(110%);transition:transform .35s ease}
 .banner.show{transform:none}
 @media (prefers-reduced-motion:reduce){.banner{transition:none}}
+
+/* ---------- public live view (phones and laptops) ---------- */
+body.display.live{overflow:auto}
+.live .board{height:auto;min-height:100vh;max-width:900px;margin:0 auto;padding:24px 16px;gap:16px}
+.live .board-head{flex-wrap:wrap;border-bottom-width:3px;padding-bottom:12px;gap:8px}
+.live .board-head h1{font-size:clamp(36px,8vw,64px)}
+.live .board-head .eyebrow{font-size:12px}
+.live .board-head .meta{font-size:14px;text-align:left}
+.live .board table{font-size:clamp(16px,3.6vw,24px)}
+.live .board th{font-size:12px;padding:6px;border-bottom-width:2px}
+.live .board td{padding:10px 6px;border-bottom-width:1px}
+.live .board td.rank{width:auto}
+.live .board td.name{max-width:none;white-space:normal}
+.live .board td.pts{font-size:clamp(20px,4.4vw,30px)}
+.live .board tr.cutline td{border-bottom-width:3px}
+.live .pips{gap:4px}
+.live .pip{width:12px;height:12px;border-width:2px}
+.live .board .foot{font-size:13px;flex-wrap:wrap}
+.live .board .empty{font-size:18px;padding:24px 0}
+.live .banner{font-size:clamp(18px,4vw,32px);padding:14px 16px}
 </style>
 </head>
 <body>
@@ -106,6 +126,73 @@ body.display{background:#15130f;color:#f6f1e7;overflow:hidden}
   function save() {
     try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
     if (channel) channel.postMessage('changed');
+    schedulePublish();
+  }
+
+  // ---- online copy: the judge laptop writes scores.json to the `scores`
+  // branch (not main, so Pages never rebuilds); the public page reads it. ----
+  var API = 'https://api.github.com/repos/dougray/lascon-lockpick-scoreboard/contents/scores.json';
+  var BRANCH = 'scores';
+  var TOKEN_KEY = KEY + '-token';
+  var sync = { status: 'idle', at: null, err: '', sha: null, timer: null, busy: false };
+
+  function getToken() { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } }
+  function setToken(t) { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
+  function b64(str) { return btoa(unescape(encodeURIComponent(str))); }
+  function httpErr(r) {
+    var m = r.status === 401 ? 'GitHub rejected the token (401); it may be wrong or expired'
+          : (r.status === 403 || r.status === 404) ? 'the token cannot write to this repo (' + r.status + ')'
+          : 'GitHub answered ' + r.status;
+    return new Error(m);
+  }
+  function schedulePublish() {
+    if (isDisplay || isLive || !getToken()) return;
+    clearTimeout(sync.timer);
+    sync.timer = setTimeout(publish, 3000);
+  }
+  function publish() {
+    var token = getToken();
+    if (!token) return;
+    if (sync.busy) { clearTimeout(sync.timer); sync.timer = setTimeout(publish, 2000); return; }
+    sync.busy = true; sync.status = 'sending'; syncChanged();
+    var headers = { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+    var body = JSON.stringify({ updated: new Date().toISOString(), contestants: state.contestants, opens: state.opens, lastOpenId: state.lastOpenId });
+    function getSha() {
+      return fetch(API + '?ref=' + BRANCH, { headers: headers, cache: 'no-store' }).then(function (r) {
+        if (r.status === 404) return null;
+        if (!r.ok) throw httpErr(r);
+        return r.json().then(function (j) { return j.sha; });
+      });
+    }
+    function put(sha) {
+      var req = { message: 'Update scores', content: b64(body), branch: BRANCH };
+      if (sha) req.sha = sha;
+      return fetch(API, { method: 'PUT', headers: headers, body: JSON.stringify(req) });
+    }
+    (sync.sha ? Promise.resolve(sync.sha) : getSha())
+      .then(put)
+      .then(function (r) { return (r.status === 409 || r.status === 422) ? getSha().then(put) : r; })
+      .then(function (r) { if (!r.ok) throw httpErr(r); return r.json(); })
+      .then(function (j) { sync.sha = j.content.sha; sync.status = 'ok'; sync.at = new Date(); sync.err = ''; })
+      .catch(function (e) {
+        sync.sha = null; sync.status = 'error';
+        sync.err = (e && e.message && !/fetch/i.test(e.message)) ? e.message : 'no connection';
+        clearTimeout(sync.timer); sync.timer = setTimeout(publish, 60000);
+      })
+      .then(function () { sync.busy = false; syncChanged(); });
+  }
+  function syncText() {
+    if (!getToken()) return 'Off. No token saved on this laptop, so the public page is not updating.';
+    if (sync.status === 'sending') return 'Publishing…';
+    if (sync.status === 'ok') return 'Published at ' + sync.at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + '. The public page picks it up within about a minute.';
+    if (sync.status === 'error') return 'Not published: ' + sync.err + '. Retrying every minute; scores are safe on this laptop.';
+    return 'On. Changes publish a few seconds after each save.';
+  }
+  function syncChanged() {
+    var el = document.getElementById('syncstatus');
+    if (!el) return;
+    el.textContent = syncText();
+    el.className = 'msg' + (sync.status === 'error' ? ' err' : sync.status === 'ok' ? ' ok' : '');
   }
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 
@@ -170,21 +257,23 @@ body.display{background:#15130f;color:#f6f1e7;overflow:hidden}
   }
 
   var params = new URLSearchParams(location.search);
-  var isDisplay = params.get('view') === 'display';
+  var isLive = params.get('view') === 'live';
+  var isDisplay = params.get('view') === 'display' || isLive;
   var app = document.getElementById('app');
 
   // =============== PROJECTOR VIEW ===============
   var page = 0, PER_PAGE = 10, lastSeenOpen = state.lastOpenId, bannerTimer = null;
 
   function renderDisplay() {
-    document.body.className = 'display';
+    document.body.className = isLive ? 'display live' : 'display';
     var rows = standings();
-    var pages = Math.max(1, Math.ceil(rows.length / PER_PAGE));
+    var per = isLive ? Math.max(1, rows.length) : PER_PAGE;
+    var pages = Math.max(1, Math.ceil(rows.length / per));
     if (page >= pages) page = 0;
-    var slice = rows.slice(page * PER_PAGE, page * PER_PAGE + PER_PAGE);
+    var slice = rows.slice(page * per, page * per + per);
 
     var body = slice.map(function (r, i) {
-      var rank = page * PER_PAGE + i + 1;
+      var rank = page * per + i + 1;
       var pips = LEVELS.map(function (L) { return h('span', { class: 'pip' + (r.top >= L.n ? ' on' : '') }); });
       var cls = (rank <= FINALISTS && r.points > 0 ? 'finalist' : '') + (rank === FINALISTS ? ' cutline' : '');
       return h('tr', { class: cls }, [
@@ -203,7 +292,7 @@ body.display{background:#15130f;color:#f6f1e7;overflow:hidden}
         ]),
         h('div', { class: 'meta' }, [
           h('div', null, [h('strong', null, 'Top ' + FINALISTS), ' at 2:00 pm Fri go to the final']),
-          h('div', null, 'Final · Fri Oct 30 · 3:00 pm · this table')
+          h('div', null, 'Final · Fri Oct 30 · 3:00 pm · ' + (isLive ? 'locksport table, vendor room' : 'this table'))
         ])
       ]),
       rows.length
@@ -213,10 +302,11 @@ body.display{background:#15130f;color:#f6f1e7;overflow:hidden}
             ])),
             h('tbody', null, body)
           ])
-        : h('div', { class: 'empty' }, 'No picks yet. Sign up at the table and start at level 1.'),
+        : h('div', { class: 'empty' }, isLive && live.err ? live.err : 'No picks yet. Sign up at the locksport table and start at level 1.'),
       h('div', { class: 'foot' }, [
         h('span', null, rows.length + (rows.length === 1 ? ' picker' : ' pickers') + ' on the ladder'),
-        pages > 1 ? h('span', null, 'Page ' + (page + 1) + ' of ' + pages) : h('span', null, 'Speed bonus: +1 pt per 30 s left')
+        isLive ? h('span', null, live.err && rows.length ? live.err : (live.updated ? 'Updated ' + new Date(live.updated).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + ' · refreshes every minute' : 'Refreshes every minute'))
+          : pages > 1 ? h('span', null, 'Page ' + (page + 1) + ' of ' + pages) : h('span', null, 'Speed bonus: +1 pt per 30 s left')
       ])
     ]));
 
@@ -234,6 +324,29 @@ body.display{background:#15130f;color:#f6f1e7;overflow:hidden}
     b.classList.add('show');
     clearTimeout(bannerTimer);
     bannerTimer = setTimeout(function () { b.classList.remove('show'); }, 7000);
+  }
+
+  // ---- public live view: read the published copy ----
+  var live = { updated: null, err: '', first: true };
+  function pollLive() {
+    fetch(API + '?ref=' + BRANCH, { headers: { Accept: 'application/vnd.github.raw+json' }, cache: 'no-cache' })
+      .then(function (r) {
+        if (r.status === 404) return null;
+        if (!r.ok) throw new Error(String(r.status));
+        return r.json();
+      })
+      .then(function (j) {
+        if (j && Array.isArray(j.contestants) && Array.isArray(j.opens)) {
+          state = { contestants: j.contestants, opens: j.opens, lastOpenId: j.lastOpenId || null };
+          live.updated = j.updated;
+        }
+        live.err = '';
+      })
+      .catch(function () { live.err = 'Can\u2019t reach the scoreboard right now. Retrying.'; })
+      .then(function () {
+        if (live.first) { lastSeenOpen = state.lastOpenId; live.first = false; }
+        renderDisplay();
+      });
   }
 
   // =============== JUDGE VIEW ===============
@@ -393,8 +506,31 @@ body.display{background:#15130f;color:#f6f1e7;overflow:hidden}
         ]) : h('p', { class: 'empty' }, 'Nothing recorded yet.')
       ]),
       h('section', { class: 'card' }, [
+        h('h2', null, 'Online scoreboard'),
+        h('p', { class: 'preview', style: 'margin:0' }, ['The ', h('a', { href: '?view=live', target: '_blank' }, 'public page'),
+          ' shows what this laptop publishes. It needs a GitHub token that can write only to this repo; it stays on this laptop.']),
+        h('div', { class: 'msg', id: 'syncstatus', role: 'status', 'aria-live': 'polite' }, ''),
+        getToken()
+          ? h('div', { class: 'tools' }, [
+              h('button', { class: 'btn secondary', onclick: function () { clearTimeout(sync.timer); publish(); } }, 'Publish now'),
+              h('button', { class: 'btn danger', onclick: function () {
+                if (!confirm('Remove the token from this laptop? The public page stops updating.')) return;
+                setToken(''); sync.status = 'idle'; renderJudge();
+              } }, 'Forget token')
+            ])
+          : h('form', { class: 'row', onsubmit: function (e) {
+              e.preventDefault();
+              var t = e.target.querySelector('input').value.trim();
+              if (!t) return;
+              setToken(t); renderJudge(); publish();
+            } }, [
+              h('label', null, ['GitHub token', h('input', { type: 'password', autocomplete: 'off', spellcheck: 'false' })]),
+              h('button', { class: 'btn', type: 'submit' }, 'Save token')
+            ])
+      ]),
+      h('section', { class: 'card' }, [
         h('h2', null, 'Backup'),
-        h('p', { class: 'preview', style: 'margin:0' }, 'Scores live in this browser only. Export a backup at every break and at the end of each day.'),
+        h('p', { class: 'preview', style: 'margin:0' }, 'This laptop holds the real scores; the online copy is for viewing. Export a backup at every break and at the end of each day.'),
         h('div', { class: 'tools' }, [
           h('button', { class: 'btn secondary', onclick: exportData }, 'Export backup'),
           h('label', { class: 'btn secondary', style: 'flex-direction:row;align-items:center' }, ['Restore backup', h('input', { type: 'file', accept: 'application/json', style: 'display:none', onchange: importData })]),
@@ -405,12 +541,18 @@ body.display{background:#15130f;color:#f6f1e7;overflow:hidden}
   }
 
   // ---- wiring ----
-  function render() { (isDisplay ? renderDisplay : renderJudge)(); }
+  function render() { (isDisplay ? renderDisplay : renderJudge)(); syncChanged(); }
   function refresh() { state = load(); render(); }
-  window.addEventListener('storage', function (e) { if (e.key === KEY) refresh(); });
-  if (channel) channel.onmessage = refresh;
-  if (isDisplay) setInterval(function () { page++; renderDisplay(); }, 12000);
-  render();
+  if (isLive) {
+    pollLive();
+    setInterval(pollLive, 60000);
+  } else {
+    window.addEventListener('storage', function (e) { if (e.key === KEY) refresh(); });
+    if (channel) channel.onmessage = refresh;
+    if (isDisplay) setInterval(function () { page++; renderDisplay(); }, 12000);
+    render();
+    schedulePublish();
+  }
 })();
 </script>
 </body>

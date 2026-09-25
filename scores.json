@@ -1,1 +1,1 @@
-{"updated":null,"contestants":[],"opens":[],"lastOpenId":null}
+{"updated":"2026-09-25T18:52:41Z","contestants":[{"id":"a","num":1,"name":"TEST lockrat","ts":1790362361000},{"id":"b","num":2,"name":"TEST Pin Wizard","ts":1790362361000}],"opens":[{"id":"o1","cid":"a","level":1,"taken":70,"ts":1790362361000},{"id":"o2","cid":"a","level":2,"taken":240,"ts":1790362361000},{"id":"o3","cid":"b","level":1,"taken":45,"ts":1790362361000}],"lastOpenId":"o3"}

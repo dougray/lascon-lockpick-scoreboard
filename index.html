@@ -162,7 +162,7 @@ body.display{background:#15130f;color:#f6f1e7;overflow:hidden}
       else if (k === 'value') el.value = v;
       else el.setAttribute(k, v === true ? '' : v);
     });
-    [].concat(kids || []).forEach(function (k) {
+    [].concat(kids == null ? [] : kids).forEach(function (k) {
       if (k == null || k === false) return;
       el.appendChild(typeof k === 'object' ? k : document.createTextNode(String(k)));
     });

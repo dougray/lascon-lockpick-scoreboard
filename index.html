@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lock Ladder Scoreboard</title>
+<meta name="description" content="Leaderboard for the LASCON 2026 progressive lockpicking contest.">
+<style>
+:root{
+  --bg:#f6f1e7; --panel:#fffdf8; --ink:#1b1a17; --muted:#5d574c; --rule:#b9ae98;
+  --accent:#8a5a12; --accent-ink:#fffdf8; --good:#1f5f3a; --bad:#8c2f1b;
+  --display:"Avenir Next Condensed","Arial Narrow","Roboto Condensed",sans-serif;
+  --body:system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.45}
+button,input,select{font:inherit}
+button{cursor:pointer}
+h1,h2{font-family:var(--display);text-transform:uppercase;letter-spacing:.02em;margin:0;line-height:1}
+
+/* ---------- judge view ---------- */
+.judge{max-width:1100px;margin:0 auto;padding:24px 16px 64px;display:flex;flex-direction:column;gap:20px}
+.judge header{display:flex;flex-wrap:wrap;gap:12px;align-items:end;justify-content:space-between;border-bottom:3px solid var(--ink);padding-bottom:12px}
+.judge header h1{font-size:44px;font-weight:800}
+.eyebrow{font-size:13px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--accent)}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+@media (max-width:760px){.grid{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--rule);padding:18px;display:flex;flex-direction:column;gap:12px}
+.card h2{font-size:24px;font-weight:800}
+label{display:flex;flex-direction:column;gap:4px;font-size:14px;font-weight:600}
+input,select{padding:10px;border:1px solid var(--ink);background:#fff;color:var(--ink);min-height:44px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+.row > label{flex:1 1 140px}
+.btn{min-height:44px;padding:10px 16px;border:2px solid var(--ink);background:var(--ink);color:var(--bg);font-weight:700}
+.btn.secondary{background:transparent;color:var(--ink)}
+.btn.danger{background:transparent;color:var(--bad);border-color:var(--bad)}
+.btn.small{min-height:32px;padding:4px 10px;font-size:14px;border-width:1px}
+.msg{min-height:1.4em;font-size:14px;font-weight:600}
+.msg.ok{color:var(--good)} .msg.err{color:var(--bad)}
+.preview{font-size:14px;color:var(--muted)}
+table{width:100%;border-collapse:collapse;font-size:15px}
+th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--rule);vertical-align:middle}
+th{border-bottom:2px solid var(--ink);font-size:13px;text-transform:uppercase;letter-spacing:.06em}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.empty{color:var(--muted);font-style:italic}
+.tools{display:flex;gap:10px;flex-wrap:wrap}
+.finalist td:first-child{box-shadow:inset 4px 0 0 var(--accent)}
+
+/* ---------- projector view ---------- */
+body.display{background:#15130f;color:#f6f1e7;overflow:hidden}
+.board{height:100vh;display:flex;flex-direction:column;padding:3.2vh 4vw;gap:2.2vh}
+.board-head{display:flex;justify-content:space-between;align-items:end;border-bottom:.5vh solid #f6f1e7;padding-bottom:1.6vh;gap:2vw}
+.board-head h1{font-size:9vh;font-weight:800}
+.board-head .eyebrow{font-size:2.4vh;color:#e0a84a}
+.board-head .meta{text-align:right;font-size:2.6vh;color:#d8cfbd;line-height:1.3}
+.board-head .meta strong{color:#e0a84a}
+.board table{font-size:4.2vh;flex:0 0 auto}
+.board th{font-size:2.2vh;color:#d8cfbd;border-bottom:.3vh solid #f6f1e7;padding:.6vh 1vw}
+.board td{padding:1vh 1vw;border-bottom:.15vh solid #4a4438}
+.board td.rank{font-family:var(--display);font-weight:800;width:8vw;color:#d8cfbd}
+.board td.name{font-weight:700;max-width:40vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.board td.pts{font-family:var(--display);font-weight:800;font-size:5vh}
+.board tr.finalist td.rank{color:#e0a84a}
+.board tr.cutline td{border-bottom:.4vh dashed #e0a84a}
+.pips{display:inline-flex;gap:.6vw;vertical-align:middle}
+.pip{width:2.6vh;height:2.6vh;border:.3vh solid #8f8574;display:inline-block}
+.pip.on{background:#e0a84a;border-color:#e0a84a}
+.board .foot{margin-top:auto;display:flex;justify-content:space-between;font-size:2.4vh;color:#d8cfbd;gap:2vw}
+.board .empty{color:#d8cfbd;font-size:4vh;padding:4vh 0}
+.banner{position:fixed;left:0;right:0;bottom:0;background:#e0a84a;color:#15130f;font-family:var(--display);font-weight:800;text-transform:uppercase;font-size:6vh;padding:2.4vh 4vw;transform:translateY(110%);transition:transform .35s ease}
+.banner.show{transform:none}
+@media (prefers-reduced-motion:reduce){.banner{transition:none}}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="banner" id="banner" role="status" aria-live="polite"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---- contest config (matches the rules sign) ----
+  var LEVELS = [
+    { n: 1, name: 'Starter padlock',       limit: 300, pts: 10 },
+    { n: 2, name: 'Laminated padlock',     limit: 300, pts: 20 },
+    { n: 3, name: 'Brass padlock',         limit: 600, pts: 35 },
+    { n: 4, name: '5-pin door cylinder',   limit: 600, pts: 50 },
+    { n: 5, name: 'Security-pin padlock',  limit: 900, pts: 75 }
+  ];
+  var FINALISTS = 5;
+  var KEY = 'lascon-lock-ladder-2026';
+  var channel = ('BroadcastChannel' in window) ? new BroadcastChannel(KEY) : null;
+
+  // ---- state ----
+  function blank() { return { contestants: [], opens: [], lastOpenId: null }; }
+  function load() {
+    try {
+      var s = JSON.parse(localStorage.getItem(KEY));
+      if (s && Array.isArray(s.contestants) && Array.isArray(s.opens)) return s;
+    } catch (e) {}
+    return blank();
+  }
+  var state = load();
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+    if (channel) channel.postMessage('changed');
+  }
+  function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+
+  // ---- scoring ----
+  function bonus(level, taken) { return Math.floor(Math.max(0, level.limit - taken) / 30); }
+  function standings() {
+    var rows = state.contestants.map(function (c) {
+      var best = {};
+      state.opens.forEach(function (o) {
+        if (o.cid !== c.id) return;
+        var b = best[o.level];
+        if (!b || o.taken < b.taken || (o.taken === b.taken && o.ts < b.ts)) best[o.level] = o;
+      });
+      var points = 0, top = 0, topTaken = Infinity, topTs = Infinity;
+      LEVELS.forEach(function (L) {
+        var o = best[L.n];
+        if (!o) return;
+        points += L.pts + bonus(L, o.taken);
+        if (L.n > top) { top = L.n; topTaken = o.taken; topTs = o.ts; }
+      });
+      return { c: c, points: points, top: top, topTaken: topTaken, topTs: topTs };
+    });
+    rows.sort(function (a, b) {
+      return b.points - a.points || b.top - a.top || a.topTaken - b.topTaken ||
+             a.topTs - b.topTs || a.c.num - b.c.num;
+    });
+    return rows;
+  }
+  function highestFor(cid) {
+    var m = 0;
+    state.opens.forEach(function (o) { if (o.cid === cid && o.level > m) m = o.level; });
+    return m;
+  }
+  function fmt(sec) {
+    var m = Math.floor(sec / 60), s = sec % 60;
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+  function parseTime(str) {
+    str = String(str || '').trim();
+    var m = str.match(/^(\d{1,2}):([0-5]\d)$/);
+    if (m) return +m[1] * 60 + +m[2];
+    if (/^\d{1,4}$/.test(str)) return +str;
+    return NaN;
+  }
+
+  // ---- tiny DOM helper (text only, never innerHTML with user data) ----
+  function h(tag, attrs, kids) {
+    var el = document.createElement(tag);
+    if (attrs) Object.keys(attrs).forEach(function (k) {
+      var v = attrs[k];
+      if (v == null || v === false) return;
+      if (k === 'class') el.className = v;
+      else if (k.slice(0, 2) === 'on') el.addEventListener(k.slice(2), v);
+      else if (k === 'value') el.value = v;
+      else el.setAttribute(k, v === true ? '' : v);
+    });
+    [].concat(kids || []).forEach(function (k) {
+      if (k == null || k === false) return;
+      el.appendChild(typeof k === 'object' ? k : document.createTextNode(String(k)));
+    });
+    return el;
+  }
+
+  var params = new URLSearchParams(location.search);
+  var isDisplay = params.get('view') === 'display';
+  var app = document.getElementById('app');
+
+  // =============== PROJECTOR VIEW ===============
+  var page = 0, PER_PAGE = 10, lastSeenOpen = state.lastOpenId, bannerTimer = null;
+
+  function renderDisplay() {
+    document.body.className = 'display';
+    var rows = standings();
+    var pages = Math.max(1, Math.ceil(rows.length / PER_PAGE));
+    if (page >= pages) page = 0;
+    var slice = rows.slice(page * PER_PAGE, page * PER_PAGE + PER_PAGE);
+
+    var body = slice.map(function (r, i) {
+      var rank = page * PER_PAGE + i + 1;
+      var pips = LEVELS.map(function (L) { return h('span', { class: 'pip' + (r.top >= L.n ? ' on' : '') }); });
+      var cls = (rank <= FINALISTS && r.points > 0 ? 'finalist' : '') + (rank === FINALISTS ? ' cutline' : '');
+      return h('tr', { class: cls }, [
+        h('td', { class: 'rank' }, rank),
+        h('td', { class: 'name' }, ['#' + r.c.num + ' ', r.c.name]),
+        h('td', null, h('span', { class: 'pips', 'aria-label': 'Level ' + r.top + ' of 5' }, pips)),
+        h('td', { class: 'num pts' }, r.points)
+      ]);
+    });
+
+    app.replaceChildren(h('div', { class: 'board' }, [
+      h('div', { class: 'board-head' }, [
+        h('div', null, [
+          h('div', { class: 'eyebrow' }, 'LASCON 2026 · Lockpicking contest'),
+          h('h1', null, 'The Lock Ladder')
+        ]),
+        h('div', { class: 'meta' }, [
+          h('div', null, [h('strong', null, 'Top ' + FINALISTS), ' at 2:00 pm Fri go to the final']),
+          h('div', null, 'Final · Fri Oct 30 · 3:00 pm · this table')
+        ])
+      ]),
+      rows.length
+        ? h('table', null, [
+            h('thead', null, h('tr', null, [
+              h('th', null, 'Rank'), h('th', null, 'Picker'), h('th', null, 'Ladder'), h('th', { class: 'num' }, 'Points')
+            ])),
+            h('tbody', null, body)
+          ])
+        : h('div', { class: 'empty' }, 'No picks yet. Sign up at the table and start at level 1.'),
+      h('div', { class: 'foot' }, [
+        h('span', null, rows.length + (rows.length === 1 ? ' picker' : ' pickers') + ' on the ladder'),
+        pages > 1 ? h('span', null, 'Page ' + (page + 1) + ' of ' + pages) : h('span', null, 'Speed bonus: +1 pt per 30 s left')
+      ])
+    ]));
+
+    // announce a new open
+    if (state.lastOpenId && state.lastOpenId !== lastSeenOpen) {
+      var o = state.opens.filter(function (x) { return x.id === state.lastOpenId; })[0];
+      var c = o && state.contestants.filter(function (x) { return x.id === o.cid; })[0];
+      if (o && c) showBanner(c.name + ' opened level ' + o.level + ' in ' + fmt(o.taken));
+    }
+    lastSeenOpen = state.lastOpenId;
+  }
+  function showBanner(text) {
+    var b = document.getElementById('banner');
+    b.textContent = text;
+    b.classList.add('show');
+    clearTimeout(bannerTimer);
+    bannerTimer = setTimeout(function () { b.classList.remove('show'); }, 7000);
+  }
+
+  // =============== JUDGE VIEW ===============
+  var ui = { cid: '', level: '', taken: '', name: '', msg: '', msgKind: '' };
+
+  function setMsg(text, kind) { ui.msg = text; ui.msgKind = kind; }
+
+  function addContestant(e) {
+    e.preventDefault();
+    var name = ui.name.trim();
+    if (!name) { setMsg('Enter a name or handle.', 'err'); return renderJudge(); }
+    var num = state.contestants.reduce(function (m, c) { return Math.max(m, c.num); }, 0) + 1;
+    var c = { id: uid(), num: num, name: name.slice(0, 40), ts: Date.now() };
+    state.contestants.push(c);
+    ui.name = ''; ui.cid = c.id; ui.level = '1'; ui.taken = '';
+    setMsg('Signed up ' + c.name + ' as #' + num + '.', 'ok');
+    save(); renderJudge();
+  }
+
+  function recordOpen(e) {
+    e.preventDefault();
+    var c = state.contestants.filter(function (x) { return x.id === ui.cid; })[0];
+    var L = LEVELS[+ui.level - 1];
+    var taken = parseTime(ui.taken);
+    if (!c) { setMsg('Pick a contestant.', 'err'); return renderJudge(); }
+    if (!L) { setMsg('Pick a level.', 'err'); return renderJudge(); }
+    if (isNaN(taken)) { setMsg('Time must look like 3:25 (or plain seconds).', 'err'); return renderJudge(); }
+    if (taken > L.limit) { setMsg('Over the ' + fmt(L.limit) + ' limit for level ' + L.n + '. Not an open.', 'err'); return renderJudge(); }
+    if (L.n > highestFor(c.id) + 1) { setMsg(c.name + ' has not opened level ' + (L.n - 1) + ' yet.', 'err'); return renderJudge(); }
+    var o = { id: uid(), cid: c.id, level: L.n, taken: taken, ts: Date.now() };
+    state.opens.push(o);
+    state.lastOpenId = o.id;
+    setMsg('#' + c.num + ' ' + c.name + ': level ' + L.n + ' in ' + fmt(taken) + ' = ' + (L.pts + bonus(L, taken)) + ' pts.', 'ok');
+    ui.taken = '';
+    ui.level = String(Math.min(5, highestFor(c.id) + 1));
+    save(); renderJudge();
+  }
+
+  function removeOpen(id) {
+    var o = state.opens.filter(function (x) { return x.id === id; })[0];
+    if (!o) return;
+    var later = state.opens.some(function (x) { return x.cid === o.cid && x.level > o.level; }) &&
+      !state.opens.some(function (x) { return x.cid === o.cid && x.level === o.level && x.id !== o.id; });
+    if (!confirm('Delete this open?' + (later ? ' This picker has higher levels recorded that will stay.' : ''))) return;
+    state.opens = state.opens.filter(function (x) { return x.id !== id; });
+    if (state.lastOpenId === id) state.lastOpenId = null;
+    setMsg('Open deleted.', 'ok'); save(); renderJudge();
+  }
+
+  function renameContestant(c) {
+    var n = prompt('New name for #' + c.num, c.name);
+    if (n == null || !n.trim()) return;
+    c.name = n.trim().slice(0, 40); save(); renderJudge();
+  }
+
+  function exportData() {
+    var blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
+    var a = h('a', { href: URL.createObjectURL(blob), download: 'lock-ladder-backup-' + new Date().toISOString().slice(0, 16).replace(':', '') + '.json' });
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  function importData(e) {
+    var f = e.target.files[0]; if (!f) return;
+    f.text().then(function (t) {
+      var s = JSON.parse(t);
+      if (!s || !Array.isArray(s.contestants) || !Array.isArray(s.opens)) throw new Error('bad file');
+      if (!confirm('Replace everything on this laptop with the backup file?')) return;
+      state = s; setMsg('Backup restored.', 'ok'); save(); renderJudge();
+    }).catch(function () { setMsg('That file is not a scoreboard backup.', 'err'); renderJudge(); });
+  }
+  function resetAll() {
+    if (!confirm('Erase every contestant and score? Export a backup first.')) return;
+    if (prompt('Type RESET to confirm') !== 'RESET') return;
+    state = blank(); setMsg('Scoreboard cleared.', 'ok'); save(); renderJudge();
+  }
+
+  function renderJudge() {
+    document.body.className = '';
+    var rows = standings();
+    var byId = {}; state.contestants.forEach(function (c) { byId[c.id] = c; });
+    var sel = byId[ui.cid];
+    var L = LEVELS[+ui.level - 1];
+    var t = parseTime(ui.taken);
+    var preview = (L && !isNaN(t) && t <= L.limit) ? ('Worth ' + L.pts + ' + ' + bonus(L, t) + ' bonus = ' + (L.pts + bonus(L, t)) + ' pts') : (L ? 'Limit ' + fmt(L.limit) : '');
+
+    var contestantOptions = [h('option', { value: '' }, 'Choose…')].concat(
+      state.contestants.slice().sort(function (a, b) { return a.num - b.num; }).map(function (c) {
+        return h('option', { value: c.id, selected: c.id === ui.cid }, '#' + c.num + ' ' + c.name + ' (L' + highestFor(c.id) + ')');
+      }));
+    var levelOptions = LEVELS.map(function (x) {
+      return h('option', { value: String(x.n), selected: String(x.n) === ui.level }, x.n + ' · ' + x.name + ' (' + x.pts + ' pts)');
+    });
+
+    var log = state.opens.slice().sort(function (a, b) { return b.ts - a.ts; }).slice(0, 25).map(function (o) {
+      var c = byId[o.cid];
+      return h('tr', null, [
+        h('td', null, new Date(o.ts).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })),
+        h('td', null, c ? '#' + c.num + ' ' + c.name : '(removed)'),
+        h('td', { class: 'num' }, o.level),
+        h('td', { class: 'num' }, fmt(o.taken)),
+        h('td', { class: 'num' }, h('button', { class: 'btn danger small', onclick: function () { removeOpen(o.id); }, 'aria-label': 'Delete this open' }, 'Delete'))
+      ]);
+    });
+
+    var board = rows.map(function (r, i) {
+      return h('tr', { class: i < FINALISTS && r.points > 0 ? 'finalist' : '' }, [
+        h('td', { class: 'num' }, i + 1),
+        h('td', null, '#' + r.c.num + ' ' + r.c.name),
+        h('td', { class: 'num' }, r.top),
+        h('td', { class: 'num' }, r.top ? fmt(r.topTaken) : '—'),
+        h('td', { class: 'num' }, r.points),
+        h('td', { class: 'num' }, h('button', { class: 'btn secondary small', onclick: function () { renameContestant(r.c); } }, 'Rename'))
+      ]);
+    });
+
+    app.replaceChildren(h('main', { class: 'judge' }, [
+      h('header', null, [
+        h('div', null, [h('div', { class: 'eyebrow' }, 'LASCON 2026 · Judge station'), h('h1', null, 'Lock Ladder Scoreboard')]),
+        h('div', { class: 'tools' }, [
+          h('button', { class: 'btn', onclick: function () { window.open('?view=display', 'lockladder-display', 'popup,width=1280,height=720'); } }, 'Open projector window')
+        ])
+      ]),
+      h('div', { class: 'msg ' + ui.msgKind, role: 'status', 'aria-live': 'polite' }, ui.msg),
+      h('div', { class: 'grid' }, [
+        h('form', { class: 'card', onsubmit: recordOpen }, [
+          h('h2', null, 'Record an open'),
+          h('label', null, ['Contestant', h('select', { onchange: function (e) {
+            ui.cid = e.target.value; ui.level = String(Math.min(5, highestFor(ui.cid) + 1)); renderJudge();
+          } }, contestantOptions)]),
+          h('div', { class: 'row' }, [
+            h('label', null, ['Level', h('select', { onchange: function (e) { ui.level = e.target.value; renderJudge(); } }, levelOptions)]),
+            h('label', null, ['Time taken (m:ss)', h('input', { inputmode: 'numeric', placeholder: '3:25', value: ui.taken, autocomplete: 'off',
+              oninput: function (e) { ui.taken = e.target.value; var p = document.getElementById('pv'); if (p) { var T = parseTime(ui.taken), LL = LEVELS[+ui.level - 1]; p.textContent = (LL && !isNaN(T) && T <= LL.limit) ? 'Worth ' + LL.pts + ' + ' + bonus(LL, T) + ' bonus = ' + (LL.pts + bonus(LL, T)) + ' pts' : (LL ? 'Limit ' + fmt(LL.limit) : ''); } } })])
+          ]),
+          h('div', { class: 'preview', id: 'pv' }, preview),
+          h('div', null, h('button', { class: 'btn', type: 'submit', disabled: !sel }, 'Record open'))
+        ]),
+        h('form', { class: 'card', onsubmit: addContestant }, [
+          h('h2', null, 'Sign up'),
+          h('label', null, ['Name or handle', h('input', { value: ui.name, maxlength: '40', autocomplete: 'off', placeholder: 'as it should show on the board',
+            oninput: function (e) { ui.name = e.target.value; } })]),
+          h('div', null, h('button', { class: 'btn', type: 'submit' }, 'Add contestant')),
+          h('p', { class: 'preview', style: 'margin:0' }, 'Numbers are given in order. Kids must be with a parent or guardian.')
+        ])
+      ]),
+      h('section', { class: 'card' }, [
+        h('h2', null, 'Standings'),
+        rows.length ? h('table', null, [
+          h('thead', null, h('tr', null, [h('th', { class: 'num' }, 'Rank'), h('th', null, 'Picker'), h('th', { class: 'num' }, 'Level'), h('th', { class: 'num' }, 'Time at level'), h('th', { class: 'num' }, 'Points'), h('th', null, '')])),
+          h('tbody', null, board)
+        ]) : h('p', { class: 'empty' }, 'No contestants yet.')
+      ]),
+      h('section', { class: 'card' }, [
+        h('h2', null, 'Recent opens'),
+        log.length ? h('table', null, [
+          h('thead', null, h('tr', null, [h('th', null, 'Time'), h('th', null, 'Picker'), h('th', { class: 'num' }, 'Level'), h('th', { class: 'num' }, 'Taken'), h('th', null, '')])),
+          h('tbody', null, log)
+        ]) : h('p', { class: 'empty' }, 'Nothing recorded yet.')
+      ]),
+      h('section', { class: 'card' }, [
+        h('h2', null, 'Backup'),
+        h('p', { class: 'preview', style: 'margin:0' }, 'Scores live in this browser only. Export a backup at every break and at the end of each day.'),
+        h('div', { class: 'tools' }, [
+          h('button', { class: 'btn secondary', onclick: exportData }, 'Export backup'),
+          h('label', { class: 'btn secondary', style: 'flex-direction:row;align-items:center' }, ['Restore backup', h('input', { type: 'file', accept: 'application/json', style: 'display:none', onchange: importData })]),
+          h('button', { class: 'btn danger', onclick: resetAll }, 'Reset scoreboard')
+        ])
+      ])
+    ]));
+  }
+
+  // ---- wiring ----
+  function render() { (isDisplay ? renderDisplay : renderJudge)(); }
+  function refresh() { state = load(); render(); }
+  window.addEventListener('storage', function (e) { if (e.key === KEY) refresh(); });
+  if (channel) channel.onmessage = refresh;
+  if (isDisplay) setInterval(function () { page++; renderDisplay(); }, 12000);
+  render();
+})();
+</script>
+</body>
+</html>

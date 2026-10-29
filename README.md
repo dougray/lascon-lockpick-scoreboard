@@ -2,7 +2,7 @@
 
 Leaderboard for the LASCON 2026 progressive lockpicking contest (Oct 29–30, locksport table, vendor room).
 
-- **Judge view:** open the site on the laptop. Sign people up and record each open (level + time taken).
+- **Judge view:** open the site on the judging device (phone or laptop). Two columns per picker: **handle/nickname** and **locks opened**; tap + as they open each lock.
 - **Projector view:** click **Open projector window** and drag that window to the projector, or open `?view=display`.
 
 - **Public page:** `?view=live` works on any phone or laptop. It checks for new scores every minute and can run up to ~5 minutes behind the table (GitHub's CDN cache).
@@ -20,4 +20,4 @@ It needs a **fine-grained personal access token** saved on the judge laptop (Onl
 
 The token never leaves that laptop's browser except to call api.github.com. Revoke it after LASCON.
 
-Scoring: level points (10/20/35/50/75) + 1 bonus point per full 30 s left on the level's clock (5/5/10/10/15 min). Ties go to highest level, then fastest open on it. Top 5 at the 2:00 pm Friday cutoff go to the final.
+Ranking: most locks opened; ties go to whoever reached that count first. Top 5 at the 2:00 pm Friday cutoff go to the final.

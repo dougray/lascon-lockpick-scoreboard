@@ -3,6 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Lock Ladder">
 <title>Lock Ladder Scoreboard</title>
 <meta name="description" content="Leaderboard for the LASCON 2026 progressive lockpicking contest.">
 <style>
@@ -271,8 +274,10 @@ body.display.live{overflow:auto}
   }
 
   var params = new URLSearchParams(location.search);
-  var isLive = params.get('view') === 'live';
-  var isDisplay = params.get('view') === 'display' || isLive;
+  var isLive = params.get('view') === 'live';     // public page, phone layout
+  var isBoard = params.get('view') === 'board';   // iPad at the table: projector layout, online scores
+  var isRemote = isLive || isBoard;
+  var isDisplay = params.get('view') === 'display' || isRemote;
   var app = document.getElementById('app');
 
   // =============== PROJECTOR VIEW ===============
@@ -316,10 +321,11 @@ body.display.live{overflow:auto}
             ])),
             h('tbody', null, body)
           ])
-        : h('div', { class: 'empty' }, isLive && live.err ? live.err : 'No picks yet. Sign up at the locksport table and start at level 1.'),
+        : h('div', { class: 'empty' }, isRemote && live.err ? live.err : 'No picks yet. Sign up at the locksport table and start at level 1.'),
       h('div', { class: 'foot' }, [
         h('span', null, rows.length + (rows.length === 1 ? ' picker' : ' pickers') + ' on the ladder'),
         isLive ? h('span', null, live.err && rows.length ? live.err : (live.updated ? 'Updated ' + new Date(live.updated).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + ' · can run up to 5 min behind the table' : 'Refreshes every minute'))
+          : isBoard ? h('span', null, (live.err && rows.length ? live.err : (live.updated ? 'Updated ' + new Date(live.updated).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Waiting for scores')) + (pages > 1 ? ' · Page ' + (page + 1) + ' of ' + pages : ''))
           : pages > 1 ? h('span', null, 'Page ' + (page + 1) + ' of ' + pages) : h('span', null, 'Speed bonus: +1 pt per 30 s left')
       ])
     ]));
@@ -603,9 +609,25 @@ body.display.live{overflow:auto}
   // ---- wiring ----
   function render() { (isDisplay ? renderDisplay : renderJudge)(); syncChanged(); }
   function refresh() { state = load(); render(); }
-  if (isLive) {
+  // keep a display screen awake (iPad Safari 16.4+, Chrome); harmless where unsupported
+  var wake = null;
+  function keepAwake() {
+    if (!isDisplay || isLive || !navigator.wakeLock || document.hidden || wake) return;
+    navigator.wakeLock.request('screen').then(function (w) {
+      wake = w; w.addEventListener('release', function () { wake = null; });
+    }).catch(function () {});
+  }
+  document.addEventListener('visibilitychange', keepAwake);
+  document.addEventListener('click', keepAwake);
+  keepAwake();
+
+  if (isRemote) {
     pollLive();
     document.addEventListener('visibilitychange', function () { if (!document.hidden) pollLive(); });
+    if (isBoard) {
+      setInterval(function () { page++; renderDisplay(); }, 12000);
+      window.addEventListener('resize', function () { PER_PAGE = 10; renderDisplay(); });
+    }
   } else {
     window.addEventListener('storage', function (e) { if (e.key === KEY) refresh(); });
     if (channel) channel.onmessage = refresh;

@@ -59,6 +59,7 @@ table.entry input.handle{width:100%;min-width:8em}
 .stepper .step{min-width:44px;padding:0;font-size:22px;line-height:1}
 .stepper .step[disabled]{opacity:.35;cursor:default}
 .stepper input.locks{width:3.2em;text-align:center;font-weight:700;font-size:18px}
+.login{max-width:420px}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
 
 /* ---------- projector view ---------- */
@@ -134,7 +135,7 @@ body.display.live{overflow:auto}
     if (Array.isArray(s.pickers)) {
       return { pickers: s.pickers.filter(function (p) { return p && p.id && typeof p.name === 'string'; })
         .map(function (p) { return { id: p.id, name: p.name, locks: Math.max(0, Math.floor(+p.locks) || 0), at: +p.at || 0 }; }),
-        lastChange: s.lastChange || null };
+        lastChange: s.lastChange || null, updated: s.updated || null };
     }
     // older format (contestants + timed opens): a picker's highest level becomes their lock count
     if (Array.isArray(s.contestants) && Array.isArray(s.opens)) {
@@ -152,6 +153,7 @@ body.display.live{overflow:auto}
   }
   var state = load();
   function save() {
+    state.updated = new Date().toISOString();
     try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
     if (channel) channel.postMessage('changed');
     schedulePublish();
@@ -167,7 +169,7 @@ body.display.live{overflow:auto}
   var RAW = 'https://raw.githubusercontent.com/dougray/lascon-lockpick-scoreboard/' + BRANCH + '/scores.json';
   var LIVE_EVERY = 60000;
   var TOKEN_KEY = KEY + '-token';
-  var sync = { status: 'idle', at: null, err: '', sha: null, timer: null, busy: false };
+  var sync = { status: 'idle', at: null, err: '', sha: null, timer: null, busy: false, pending: false, gen: 0 };
 
   function getToken() { try { return localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { return ''; } }
   function setToken(t) { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY); } catch (e) {} }
@@ -179,7 +181,8 @@ body.display.live{overflow:auto}
     return new Error(m);
   }
   function schedulePublish() {
-    if (isDisplay || isLive || !getToken()) return;
+    if (isDisplay || isLive || !getToken() || !loggedIn()) return;
+    sync.gen++; sync.pending = true;
     clearTimeout(sync.timer);
     sync.timer = setTimeout(publish, 3000);
   }
@@ -188,8 +191,9 @@ body.display.live{overflow:auto}
     if (!token) return;
     if (sync.busy) { clearTimeout(sync.timer); sync.timer = setTimeout(publish, 2000); return; }
     sync.busy = true; sync.status = 'sending'; syncChanged();
+    var gen = sync.gen;
     var headers = { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
-    var body = JSON.stringify({ updated: new Date().toISOString(), pickers: state.pickers, lastChange: state.lastChange });
+    var body = JSON.stringify({ updated: state.updated || new Date().toISOString(), pickers: state.pickers, lastChange: state.lastChange });
     function getSha() {
       return fetch(API + '?ref=' + BRANCH, { headers: headers, cache: 'no-store' }).then(function (r) {
         if (r.status === 404) return null;
@@ -206,7 +210,7 @@ body.display.live{overflow:auto}
       .then(put)
       .then(function (r) { return (r.status === 409 || r.status === 422) ? getSha().then(put) : r; })
       .then(function (r) { if (!r.ok) throw httpErr(r); return r.json(); })
-      .then(function (j) { sync.sha = j.content.sha; sync.status = 'ok'; sync.at = new Date(); sync.err = ''; })
+      .then(function (j) { sync.sha = j.content.sha; sync.status = 'ok'; sync.at = new Date(); sync.err = ''; if (gen === sync.gen) sync.pending = false; })
       .catch(function (e) {
         sync.sha = null; sync.status = 'error';
         sync.err = (e && e.message && !/fetch/i.test(e.message)) ? e.message : 'no connection';
@@ -214,6 +218,49 @@ body.display.live{overflow:auto}
       })
       .then(function () { sync.busy = false; syncChanged(); });
   }
+  // ---- pick up changes made on another judge device (e.g. your phone) ----
+  // Only when nothing local is waiting to publish, so an unsent edit is never thrown away.
+  function pullLatest() {
+    var token = getToken();
+    if (isDisplay || !token || !loggedIn() || sync.pending || sync.busy) return;
+    fetch(API + '?ref=' + BRANCH, { cache: 'no-store', headers: { Authorization: 'Bearer ' + token,
+      Accept: 'application/vnd.github.raw+json', 'X-GitHub-Api-Version': '2022-11-28' } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (j) {
+        var n = j && normalize(j);
+        if (!n || !n.updated || sync.pending || sync.busy) return;
+        if (!state.updated || n.updated > state.updated) {
+          state = n; sync.sha = null;
+          try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+          if (channel) channel.postMessage('changed');
+          setMsg('Loaded the latest scores (saved ' + new Date(n.updated).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + ' on another device).', 'ok');
+          renderJudge();
+        } else if (state.updated > n.updated) {
+          schedulePublish();   // this device has newer edits that never went out
+        }
+      })
+      .catch(function () {});
+  }
+
+  // ---- judge login (the board and public pages stay open) ----
+  // Only a salted PBKDF2 hash is stored here, never the password. This gates the judge screen;
+  // the GitHub token is what actually guards the online scores.
+  var AUTH = {"salt":"eWFS2GkExyXtnkHQI8CxKw==","iter":310000,"hash":"4VZNDBHJwVlYuGHFzGzpKDADxOx/cFWFcvFBeZfv9I0="};
+  var SESSION_KEY = KEY + '-session', SESSION_HOURS = 12;
+  var login = { busy: false, err: '', fails: 0, until: 0, user: '' };
+  function loggedIn() { try { return +localStorage.getItem(SESSION_KEY) > Date.now(); } catch (e) { return false; } }
+  function b64d(str) { return Uint8Array.from(atob(str), function (c) { return c.charCodeAt(0); }); }
+  function checkLogin(u, pw) {
+    if (!window.crypto || !crypto.subtle) return Promise.reject(new Error('no crypto'));
+    return crypto.subtle.importKey('raw', new TextEncoder().encode(u + '\n' + pw), 'PBKDF2', false, ['deriveBits'])
+      .then(function (k) { return crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: b64d(AUTH.salt), iterations: AUTH.iter }, k, 256); })
+      .then(function (bits) {
+        var a = new Uint8Array(bits), b = b64d(AUTH.hash), d = a.length ^ b.length;
+        for (var i = 0; i < a.length && i < b.length; i++) d |= a[i] ^ b[i];
+        return d === 0;
+      });
+  }
+
   function syncText() {
     if (!getToken()) return 'Off. No token saved on this device, so the public page is not updating.';
     if (sync.status === 'sending') return 'Publishing…';
@@ -456,7 +503,56 @@ body.display.live{overflow:auto}
     state = blank(); setMsg('Scoreboard cleared.', 'ok'); save(); renderJudge();
   }
 
+  function renderLogin(focusId) {
+    document.body.className = '';
+    app.replaceChildren(h('main', { class: 'judge' }, [
+      h('header', null, [h('div', null, [h('div', { class: 'eyebrow' }, 'LASCON 2026 · Judge station'), h('h1', null, 'Lock Ladder Scoreboard')])]),
+      h('form', { class: 'card login', onsubmit: doLogin }, [
+        h('h2', null, 'Judge login'),
+        h('label', null, ['Username', h('input', { id: 'l-user', name: 'username', value: login.user, autocomplete: 'username', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false',
+          oninput: function (e) { login.user = e.target.value; } })]),
+        h('label', null, ['Password', h('input', { id: 'l-pass', name: 'password', type: 'password', autocomplete: 'current-password' })]),
+        h('div', { class: 'msg err', role: 'alert' }, login.err),
+        h('div', null, h('button', { class: 'btn', type: 'submit', disabled: login.busy }, login.busy ? 'Checking…' : 'Log in')),
+        h('p', { class: 'preview flush' }, ['Just here for the scores? ', h('a', { href: '?view=live' }, 'See the live board'), '.'])
+      ])
+    ]));
+    var f = document.getElementById(focusId || (login.user ? 'l-pass' : 'l-user'));
+    if (f) f.focus();
+  }
+  function doLogin(e) {
+    e.preventDefault();
+    if (login.busy) return;
+    if (Date.now() < login.until) {
+      login.err = 'Too many tries. Wait ' + Math.ceil((login.until - Date.now()) / 1000) + ' seconds.';
+      return renderLogin('l-pass');
+    }
+    var u = document.getElementById('l-user').value.trim(), pw = document.getElementById('l-pass').value;
+    login.user = u; login.busy = true; login.err = ''; renderLogin('l-pass');
+    checkLogin(u, pw).then(function (ok) {
+      login.busy = false;
+      if (!ok) {
+        login.fails++;
+        if (login.fails >= 5) { login.fails = 0; login.until = Date.now() + 30000; }
+        login.err = 'Wrong username or password.';
+        return renderLogin('l-pass');
+      }
+      login.fails = 0; login.err = '';
+      try { localStorage.setItem(SESSION_KEY, String(Date.now() + SESSION_HOURS * 3600000)); } catch (err) {}
+      ui.focus = 'j-name';
+      renderJudge(); syncChanged(); pullLatest();
+    }).catch(function () {
+      login.busy = false; login.err = 'This browser can\u2019t check the password. Use Safari or Chrome over https.';
+      renderLogin();
+    });
+  }
+  function logOut() {
+    try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+    login.user = ''; renderLogin();
+  }
+
   function renderJudge() {
+    if (!loggedIn()) return renderLogin();
     // The view is rebuilt on every change; carry focus (and caret) across by element id.
     var a = document.activeElement, focusId = ui.focus || (a && app.contains(a) && a.id) || '', caret = null;
     try { if (a && a.id === focusId && a.selectionStart != null) caret = [a.selectionStart, a.selectionEnd]; } catch (e) {}
@@ -499,7 +595,8 @@ body.display.live{overflow:auto}
       h('header', null, [
         h('div', null, [h('div', { class: 'eyebrow' }, 'LASCON 2026 · Judge station'), h('h1', null, 'Lock Ladder Scoreboard')]),
         h('div', { class: 'tools' }, [
-          h('a', { class: 'btn secondary', href: '?view=display', target: 'lockladder-display' }, 'Open board on this device')
+          h('a', { class: 'btn secondary', href: '?view=display', target: 'lockladder-display' }, 'Open board on this device'),
+          h('button', { class: 'btn secondary', type: 'button', onclick: logOut }, 'Log out')
         ])
       ]),
       h('div', { class: 'msg ' + ui.msgKind }, ui.msg),
@@ -588,7 +685,11 @@ body.display.live{overflow:auto}
       window.addEventListener('resize', function () { PER_PAGE = 10; renderDisplay(); });
     }
     render();
-    schedulePublish();
+    if (!isDisplay) {
+      pullLatest();
+      setInterval(pullLatest, 60000);
+      document.addEventListener('visibilitychange', function () { if (!document.hidden) pullLatest(); });
+    }
   }
 })();
 </script>

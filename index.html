@@ -120,6 +120,19 @@ body.display.live{overflow:auto}
 (function () {
   'use strict';
 
+  // LASCON 2026 is over. Every view (judge, board, live) now goes to the club's thank-you
+  // page, and any device that opens this forgets its GitHub token and judge login, so nothing
+  // can publish. Saved scores stay in the browser as a backup. Set to false to reopen.
+  var CLOSED = true;
+  if (CLOSED) {
+    try {
+      localStorage.removeItem('lascon-lock-ladder-2026-token');
+      localStorage.removeItem('lascon-lock-ladder-2026-session');
+    } catch (e) {}
+    location.replace('https://dougray.github.io/longhorn-lockpicking/scoreboard/');
+    return;
+  }
+
   // ---- contest config ----
   // Two things are entered per picker: a handle and how many locks they have opened.
   var LADDER = 5;          // locks on the ladder; drawn as pips on the board

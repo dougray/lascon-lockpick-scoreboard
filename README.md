@@ -21,3 +21,7 @@ It needs a **fine-grained personal access token** saved on the judge laptop (Onl
 The token never leaves that laptop's browser except to call api.github.com. Revoke it after LASCON.
 
 Ranking: most locks opened; ties go to whoever reached that count first. Top 5 at the 2:00 pm Friday cutoff go to the final.
+
+## License
+
+[Apache License 2.0](LICENSE).
